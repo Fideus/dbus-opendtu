@@ -27,6 +27,7 @@ class DbusOpenDTUService:
     config = self._getConfig()
     deviceinstance = int(config['DEFAULT']['Deviceinstance'])
     customname = config['DEFAULT']['CustomName']
+    ac_position = int(config['DEFAULT']['Position'])
     
     self._dbusservice = VeDbusService("{}.http_{:02d}".format(servicename, deviceinstance))
     self._paths = paths
@@ -49,7 +50,7 @@ class DbusOpenDTUService:
     self._dbusservice.add_path('/Latency', None)    
     self._dbusservice.add_path('/FirmwareVersion', 0.1)
     self._dbusservice.add_path('/HardwareVersion', 0)
-    self._dbusservice.add_path('/Position', 0) # normaly only needed for pvinverter
+    self._dbusservice.add_path('/Position', ac_position) # normaly only needed for pvinverter
     self._dbusservice.add_path('/Serial', self._getOpenDTUSerial())
     self._dbusservice.add_path('/UpdateIndex', 0)
     self._dbusservice.add_path('/StatusCode', 0)  # Dummy path so VRM detects us as a PV-inverter.
@@ -138,32 +139,37 @@ class DbusOpenDTUService:
        
        config = self._getConfig()
     
-       pvinverter_phase = str(config['DEFAULT']['Phase'])
-       
-       #send data to DBus
+       # pvinverter_phase = str(config['DEFAULT']['Phase'])
+       pvinverter_numbers = int(config['DEFAULT']['InverterNumbers'])
+       # send data to DBus
+       power = 0.0
+       total = 0.0
+       voltage = 0.0
+       current = 0.0
+       total_current = 0.0
+
        for phase in ['L1', 'L2', 'L3']:
          pre = '/Ac/' + phase
-         
-         if phase == pvinverter_phase:
-           power = meter_data['total']['Power']['v']
-           total = meter_data['total']['YieldTotal']['v']
-           voltage = meter_data['inverters'][0]['0']['Voltage']['v']
-           current = meter_data['inverters'][0]['0']['Current']['v']
-           
-           self._dbusservice[pre + '/Voltage'] = voltage
-           self._dbusservice[pre + '/Current'] = current
-           self._dbusservice[pre + '/Power'] = power
-           if power > 0:
-             self._dbusservice[pre + '/Energy/Forward'] = total
-
-           
-         else:
-           self._dbusservice[pre + '/Voltage'] = 0
-           self._dbusservice[pre + '/Current'] = 0
-           self._dbusservice[pre + '/Power'] = 0
-
-       self._dbusservice['/Ac/Power'] = self._dbusservice['/Ac/' + pvinverter_phase + '/Power']
-       self._dbusservice['/Ac/Energy/Forward'] = self._dbusservice['/Ac/' + pvinverter_phase + '/Energy/Forward']
+         for actual_inverter in range(pvinverter_numbers):
+           pvinverter_phase = str(config['INVERTER{}'.format(actual_inverter)]['Phase'])# Take phase of actual inverter from config
+           if phase == pvinverter_phase:                                                # following data single phase only
+             power += meter_data['inverters'][actual_inverter]['0']['Power']['v']       # Actual power of all conected inverter
+             total += meter_data['inverters'][actual_inverter]['0']['YieldTotal']['v']  # Total power all time of all conected inverter
+             voltage = meter_data['inverters'][actual_inverter]['0']['Voltage']['v']    # Take voltage only from first inverter
+             current += meter_data['inverters'][actual_inverter]['0']['Current']['v']   # Actual current of all conected inverter
+             total_current += current
+         self._dbusservice[pre + '/Energy/Forward'] = total           
+         self._dbusservice[pre + '/Voltage'] = voltage
+         self._dbusservice[pre + '/Current'] = current
+         self._dbusservice[pre + '/Power'] = power
+         power = 0.0
+         total = 0.0
+         voltage = 0.0
+         current = 0.0
+        
+       #following data of all phase
+       self._dbusservice['/Ac/Power'] = meter_data['total']['Power']['v']                 # Actual power of all conected inverter
+       self._dbusservice['/Ac/Energy/Forward'] = meter_data['total']['YieldTotal']['v']   # Total power all time of all conected inverter
        
        #logging
        logging.debug("OpenDTU Power (/Ac/Power): %s" % (self._dbusservice['/Ac/Power']))
